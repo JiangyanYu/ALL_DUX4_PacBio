@@ -1,0 +1,142 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+# input data
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+
+working_dir = "/Users/Yu_J/Downloads/Antic_DUX4/"
+
+roi = read.table(paste0(working_dir,"/methylation/DUX4_ROI.bed"),header = FALSE,stringsAsFactors = FALSE)
+
+wildtype = read.table(paste0(working_dir,"/methylation/add_DNA3_DNA7/reads_without_DUX4r_MAPQ1_methylation_mean.txt"))
+dux4r = read.table(paste0(working_dir,"/methylation/add_DNA3_DNA7/reads_with_DUX4r_MAPQ1_methylation_mean.txt"))
+
+## select on dux4 genes
+wildtype = wildtype[wildtype$V4 %in% roi$V4,]
+dux4r = dux4r[dux4r$V4 %in% roi$V4,]
+
+wildtype$type = "Reads without DUX4r"
+dux4r$type = "Reads with DUX4r"
+
+mean(wildtype$V5)
+mean(dux4r$V5)
+```
+
+## plot
+
+```{r,fig.width=8,fig,highlight=3}
+plot_data = rbind(wildtype,dux4r)
+### calculate the mean per group
+mean_with = subset(plot_data, type == "Reads with DUX4r")$V5 %>% mean() %>% round(2)
+mean_without = subset(plot_data, type == "Reads without DUX4r")$V5 %>% mean() %>% round(2)
+
+ggplot(plot_data,aes(x=type,y=V5,fill=type))+
+  geom_violin()+
+  ggpubr::stat_compare_means(method = "t.test",label.y = 25,label.x = 2.3,size=7)+
+  coord_flip()+
+  theme_classic()+
+  ## add the mean value into the figure
+  annotate("text",label = "Mean:           vs     ", y = 25, x = 0.5, size = 5) +
+  annotate("text",label = mean_with, y = 26, x = 0.5, size = 5,color = "#F8766D") +
+  annotate("text",label = mean_without, y = 44, x = 0.5, size = 5,color = "#00BFC4") +
+  ylim(c(0,100.1))+
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+        axis.text = element_text(size=20),
+        axis.title = element_text(size=0),
+        legend.position = "NULL")
+```
+
+
+# frequency overview
+
+## reads level
+
+```{r, fig.height=3,fig.width=16}
+data = readxl::read_xlsx(path = paste0(working_dir,"Overview_gene annotations_13.06.2025.xlsx"),sheet = "overview")
+data$count = 1
+
+
+data %>% 
+  group_by(left_pos_corrected,left_gene_corrected) %>%
+  summarise(sum = sum(count)) -> data1
+
+
+data1$left_pos_corrected = as.numeric(data1$left_pos_corrected) 
+data1 = data1[data1$left_pos_corrected != 0,]
+data1 = data1[data1$left_pos_corrected <= 100136190,]
+
+ggplot(data1,aes(x=left_pos_corrected,y=sum,label=left_gene_corrected,fill=left_gene_corrected))+
+  geom_segment( aes(x=left_pos_corrected, xend=left_pos_corrected, y=0, yend=sum),color = "grey") +
+  geom_point(aes(size=sum), alpha=0.7, shape=21) +
+  scale_size_continuous(range = c(1, 15))+
+  xlim(c(min(data1$left_pos_corrected),max(data1$left_pos_corrected+100)))+
+  ylim(c(0,max(data1$sum+2)))+
+  geom_text(hjust=-0.1,size=5,check_overlap = TRUE,angle=0)+
+  labs(title = "Closest genes next to left breakpoints (reads level)")+
+  # ggrepel::geom_label_repel(size=5) +
+  # scale_x_log10()+
+  theme_classic()+
+  theme(legend.position = "NULL",
+        plot.title = element_text(size=20),
+        axis.text.x = element_text(size=20),
+        axis.title = element_text(size=20),
+        axis.text.y = element_text(size=20),
+        axis.title.y = element_text(size=0)
+        # axis.ticks.y = element_blank(),
+        # axis.line.y = element_blank()
+        )
+```
+
+## sample level
+
+```{r}
+data1 = unique(data[,c("left_pos_corrected","left_gene_corrected","sample_name")])
+data %>% 
+  group_by(left_pos_corrected,sample_name) %>%
+  summarise(sum = sum(count)) -> data1
+
+data1 = merge(data1,unique(data[,c("left_pos_corrected","left_gene_corrected")]),by="left_pos_corrected")
+
+
+data1$left_pos_corrected = as.numeric(data1$left_pos_corrected) 
+data1 = data1[data1$left_pos_corrected != 0,]
+data1 = data1[data1$left_pos_corrected <= 100136190,]
+
+ggplot(data1,aes(x=left_pos_corrected,y=sum,label=left_gene_corrected,fill=left_gene_corrected))+
+  geom_segment( aes(x=left_pos_corrected, xend=left_pos_corrected, y=0, yend=sum),color = "grey") +
+  geom_point(aes(size=sum), alpha=0.7, shape=21) +
+  scale_size_continuous(range = c(1, 15))+
+  xlim(c(min(data1$left_pos_corrected),max(data1$left_pos_corrected+100)))+
+  ylim(c(0,max(data1$sum+2)))+
+  geom_text(hjust=-0.1,size=5,check_overlap = TRUE,angle=0)+
+  labs(title = "Closest genes next to left breakpoints (reads level)")+
+  # ggrepel::geom_label_repel(size=5) +
+  # scale_x_log10()+
+  theme_classic()+
+  theme(legend.position = "NULL",
+        plot.title = element_text(size=20),
+        axis.text.x = element_text(size=20),
+        axis.title = element_text(size=20),
+        axis.text.y = element_text(size=20),
+        axis.title.y = element_text(size=0)
+        # axis.ticks.y = element_blank(),
+        # axis.line.y = element_blank()
+        )
+```
+
+
+# session info
+
+```{r}
+sessionInfo()
+```
+
