@@ -16,21 +16,28 @@ bash step1_split_bam_file.sh
 
 The script groups alignment records by the part of each read name before the first `/`, writes one sorted and indexed BAM per group, and removes its intermediate SAM files. Outputs are named `<group>_reads_without_DUX4r.bam` in the current directory. It requires `samtools` on `PATH`.
 
-### 2. Calculate CpG scores
+### 2. Calculate CpG scores for the DUX4 part
 
-The score script searches for BAM files under `bam_files/` and expects the CpG tools executable at:
+Place the per-patient BAMs in `bam_files/` and place the CpG tools distribution at the path expected by the script:
 
 ```text
 ./pb-CpG-tools-v3.0.0-x86_64-unknown-linux-gnu/bin/aligned_bam_to_cpg_scores
 ```
 
-Create `bam_files/`, put the per-patient BAMs from step 1 there, and place the CpG tools distribution at the expected path. Then run:
+Then run:
 
 ```bash
 bash step2_run_cpg_scores.sh
 ```
 
-For each BAM, it runs `aligned_bam_to_cpg_scores` in count pileup mode with minimum coverage 1 and minimum mapping quality 0. The output prefix is based on the BAM path (for example, `bam_files/<name>`). The script exits nonzero if no BAMs are found or if any sample fails.
+For each BAM, the script runs `aligned_bam_to_cpg_scores` in count pileup mode to quantify CpG methylation in the DUX4 part. Its filtering thresholds are set directly in the command in `step2_run_cpg_scores.sh`:
+
+| Parameter | Current value | Meaning |
+| --- | ---: | --- |
+| `--min-mapq` | `0` | Minimum mapping quality for reads included in the calculation. |
+| `--min-coverage` | `1` | Minimum read coverage required at a CpG position. |
+
+These values are currently permissive: reads with mapping quality 0 are allowed, and a CpG position needs coverage from at least one read. Change the values in the script to use different thresholds. The script searches for BAMs in `./bam_files/`, writes outputs with prefixes based on each BAM path, and exits nonzero if no BAMs are found or any sample fails. It requires the CpG tools executable above.
 
 ### 3. Map CpG calls to genes and calculate means
 
@@ -50,6 +57,5 @@ The commented commands at the top of the script show one approach for deriving `
 
 ## Notes
 
-- The scripts use paths relative to the current working directory in steps 1 and 2; run those commands from this folder.
 - Step 1 creates per-group BAMs in the current directory, while step 2 reads BAMs from `bam_files/`. Move or copy the step 1 outputs into that directory before running step 2.
 - Keep the reference genome/annotation and CpG BED chromosome names consistent (for example, `chr1` versus accession-style sequence names).
