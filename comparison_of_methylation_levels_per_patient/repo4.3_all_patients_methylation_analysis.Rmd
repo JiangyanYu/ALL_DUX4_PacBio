@@ -1,0 +1,195 @@
+---
+title: "DUX4r methylation comparison by sample"
+output:
+  html_document:
+    df_print: paged
+---
+
+This report follows the import and methylation comparison workflow in
+`repo4.2_methylation_comparison_export_pdf.Rmd` for all files in `annotated/`.
+The original ROI BED is not present in this project, so the comparable DUX4
+region subset below is defined by gene names containing `DUX4` (for example,
+`DUX4L51`).
+
+## Import annotated files
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(ggpubr)
+
+data_dir <- "annotated"
+files <- list.files(data_dir, pattern = "_methylation_mean\\.txt$", full.names = TRUE)
+if (length(files) == 0) stop("No annotated methylation files found in ", data_dir)
+
+read_annotated_file <- function(file) {
+  filename <- basename(file)
+  match <- stringr::str_match(
+    filename,
+    "^(.*)_reads_(with|without)_DUX4r_methylation_mean\\.txt$"
+  )
+  if (anyNA(match[1, 2:3])) {
+    stop("Unexpected annotated filename format: ", filename)
+  }
+
+  readr::read_tsv(
+    file,
+    col_names = c("chromosome", "start", "end", "gene", "methylation_mean"),
+    col_types = readr::cols(
+      chromosome = readr::col_character(),
+      start = readr::col_integer(),
+      end = readr::col_integer(),
+      gene = readr::col_character(),
+      methylation_mean = readr::col_double()
+    ),
+    comment = "#",
+    show_col_types = FALSE
+  ) |>
+    mutate(sample = match[1, 2], status = match[1, 3])
+}
+
+all_data <- purrr::map_dfr(files, read_annotated_file)
+
+dplyr::count(all_data, sample, status, name = "regions")
+```
+
+Each imported row receives `sample` (the filename prefix before `_reads_`)
+and `status` (`with` or `without`).
+
+## Select DUX4-associated regions
+
+```{r}
+roi = read.table(paste0("DUX4_ROI.bed"),header = FALSE,stringsAsFactors = FALSE)
+
+dux4_data <- all_data |>
+  filter(gene %in% roi$V4) |>
+  filter(!is.na(methylation_mean))
+
+# dux4_data <- all_data |>
+#   filter(stringr::str_detect(gene, regex("DUX4", ignore_case = TRUE))) |>
+#   filter(!is.na(methylation_mean))
+
+if (nrow(dux4_data) == 0) {
+  stop("No rows with DUX4 in the gene name were found. Check the intended ROI.")
+}
+
+dux4_data |>
+  group_by(status) |>
+  summarise(
+    regions = n(),
+    mean_methylation = mean(methylation_mean),
+    .groups = "drop"
+  )
+```
+
+## Compare paired sample means
+
+The plot and test use one mean per sample and status. Samples without both
+statuses are excluded from the paired test.
+
+```{r, fig.width=8, fig.height=6}
+sample_means <- dux4_data |>
+  group_by(sample, status) |>
+  summarise(mean_methylation = mean(methylation_mean), .groups = "drop") |>
+  mutate(status = factor(status, levels = c("without", "with")))
+
+paired_means <- sample_means |>
+  pivot_wider(names_from = status, values_from = mean_methylation) |>
+  filter(!is.na(without), !is.na(with)) |>
+  mutate(difference = with - without)
+
+cat("Complete paired samples:", nrow(paired_means), "\n")
+p_value_label <- NULL
+mean_label <- NULL
+
+if (nrow(paired_means) >= 2) {
+  cat("Mean paired difference (with - without):",
+      mean(paired_means$difference), "\n")
+  cat("Median paired difference (with - without):",
+      median(paired_means$difference), "\n")
+
+  # Primary test: paired t-test across samples. The independent units are
+  # samples/patients, not the individual genomic regions.
+  paired_t_test <- t.test(
+    paired_means$with,
+    paired_means$without,
+    paired = TRUE
+  )
+  print(paired_t_test)
+  p_value_label <- paste0(
+    "Paired t-test: p = ",
+    format.pval(paired_t_test$p.value, digits = 3, eps = 0.001)
+  )
+  mean_label <- paste0(
+    "Mean: <span style='color:#F8766D'>",
+    formatC(mean(paired_means$without), format = "f", digits = 2),
+    "</span> vs <span style='color:#00BFC4'>",
+    formatC(mean(paired_means$with), format = "f", digits = 2),
+    "</span>"
+  )
+
+  # Rank-based sensitivity test; interpret cautiously when there are few pairs.
+  paired_wilcox_test <- wilcox.test(
+    paired_means$with,
+    paired_means$without,
+    paired = TRUE,
+    exact = FALSE
+  )
+  print(paired_wilcox_test)
+} else {
+  message("Fewer than two samples have both statuses; paired tests not calculated.")
+}
+
+paired_plot <- ggplot(sample_means,aes(y=status,x=mean_methylation,fill=status,group = sample))+
+  geom_line(alpha = 0.45, colour = "grey55") +
+  geom_point(aes(colour = status), size = 3) +
+  {if (!is.null(p_value_label)) annotate(
+    "text", y = 2.5, x = 50, label = p_value_label,
+    size = 7, vjust = 1
+  )} +
+  scale_y_discrete(labels = c(without = "DUX4 loci from reads without DUX4r", with = "DUX4 loci from reads with DUX4r")) +
+  scale_colour_manual(values = c(without = "#F8766D", with = "#00BFC4")) +
+  scale_fill_manual(values = c(without = "#F8766D", with = "#00BFC4")) +
+  coord_cartesian(xlim = c(0, 100)) +
+  labs(
+    y = NULL,
+    x = "Mean methylation score",
+    colour = "Status",
+    caption = mean_label
+  ) +
+
+  theme_classic()+
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+        axis.text = element_text(size=20),
+        axis.title = element_text(size=20),
+        legend.position = "none",
+        plot.caption = ggtext::element_markdown(size = 14, hjust = 0.5))
+
+paired_plot
+
+
+```
+
+## Export figure to PDF
+
+This section saves the paired sample-means plot, including the paired t-test
+p-value, as an 8 × 6 inch PDF in the current working directory.
+
+```{r, eval=TRUE}
+
+
+
+ggsave(
+  filename = "repo4.3_DUX4r_methylation_comparison.pdf",
+  plot = paired_plot,
+  device = grDevices::cairo_pdf,
+  width = 8,
+  height = 3,
+  units = "in"
+)
+```
+
+## Session information
+
+```{r}
+sessionInfo()
+```
